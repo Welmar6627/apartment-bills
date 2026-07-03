@@ -27,11 +27,12 @@ export default function TenantPortal() {
   const [selectedTenantId, setSelectedTenantId] = useState<string>('');
   const [bills, setBills] = useState<Bill[]>([]);
   const [loadingBills, setLoadingBills] = useState(false);
-  const [refInputs, setRefInputs] = useState<Record<number, string>>({});
+
   const [submitStates, setSubmitStates] = useState<Record<number, 'idle' | 'loading' | 'success' | 'error'>>({});
   const [submitMessages, setSubmitMessages] = useState<Record<number, string>>({});
   const [copied, setCopied] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
+  const [receiptFiles, setReceiptFiles] = useState<Record<number, File | null>>({});
 
   useEffect(() => {
     setIsMobile(/Android|iPhone|iPad|iPod/i.test(navigator.userAgent));
@@ -62,38 +63,10 @@ export default function TenantPortal() {
     const id = e.target.value;
     setSelectedTenantId(id);
     setBills([]);
-    setRefInputs({});
     setSubmitStates({});
     if (id) fetchBills(id);
   };
 
-  const handleSubmit = async (billId: number) => {
-    const ref = refInputs[billId] || '';
-    if (!/^\d{13}$/.test(ref)) {
-      setSubmitMessages((p) => ({ ...p, [billId]: 'Reference number must be exactly 13 digits.' }));
-      setSubmitStates((p) => ({ ...p, [billId]: 'error' }));
-      return;
-    }
-    setSubmitStates((p) => ({ ...p, [billId]: 'loading' }));
-    try {
-      const res = await fetch('/api/payments', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ bill_id: billId, tenant_id: parseInt(selectedTenantId), reference_number: ref }),
-      });
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error);
-      }
-      setSubmitStates((p) => ({ ...p, [billId]: 'success' }));
-      setSubmitMessages((p) => ({ ...p, [billId]: 'Submitted! Awaiting admin approval.' }));
-      fetchBills(selectedTenantId);
-    } catch (e: unknown) {
-      const message = e instanceof Error ? e.message : 'Submission failed.';
-      setSubmitStates((p) => ({ ...p, [billId]: 'error' }));
-      setSubmitMessages((p) => ({ ...p, [billId]: message }));
-    }
-  };
 
   const copyGCash = () => {
     navigator.clipboard.writeText(GCASH_NUMBER.replace(/-/g, ''));
@@ -107,9 +80,6 @@ export default function TenantPortal() {
   const pendingBills = bills.filter((b) => b.payment_status === 'pending');
   const approvedBills = bills.filter((b) => b.payment_status === 'approved');
 
-  function setReceiptFiles(arg0: (prev: any) => any) {
-    throw new Error('Function not implemented.');
-  }
 
   return (
     <main className="bg-animated min-h-screen">
@@ -204,7 +174,7 @@ export default function TenantPortal() {
                           </button>
                         </div>
 
-                        <p className="text-slate-500 text-xs">After paying, enter your 13-digit reference number below.</p>
+                        <p className="text-slate-500 text-xs">After paying, upload your receipt below.</p>
                       </div>
                     </div>
                   </section>
@@ -240,51 +210,82 @@ export default function TenantPortal() {
 
                         {/* Receipt Upload */}
                         <div className="space-y-2">
-                          <label htmlFor={`receipt-${bill.id}`} className="text-xs text-slate-400">Upload receipt image</label>
-                          <input
-                            id={`receipt-${bill.id}`}
-                            type="file"
-                            accept="image/*"
-                            onChange={(e) => {
-                              const file = e.target.files?.[0] || null;
-                              setRefInputs((prev) => ({ ...prev, [bill.id]: file ? file.name : '' }));
-                              // Store file in a separate state (receiptFiles)
-                              setReceiptFiles((prev) => ({ ...prev, [bill.id]: file }));
-                            }}
-                          />
+                          <label className="text-xs font-medium text-slate-400">Upload Receipt Screenshot</label>
+                          <label
+                            htmlFor={`receipt-${bill.id}`}
+                            className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed border-indigo-500/30 rounded-xl cursor-pointer bg-slate-900/50 hover:bg-slate-800/50 transition-colors"
+                          >
+                            <div className="flex flex-col items-center justify-center pt-5 pb-6">
+                              <span className="text-2xl mb-2">📸</span>
+                              <p className="mb-2 text-sm text-slate-400">
+                                <span className="font-semibold text-indigo-400">Click to upload</span> or drag and drop
+                              </p>
+                              <p className="text-xs text-slate-500 max-w-[200px] text-center truncate">
+                                {receiptFiles[bill.id] ? receiptFiles[bill.id]?.name : 'PNG, JPG up to 5MB'}
+                              </p>
+                            </div>
+                            <input
+                              id={`receipt-${bill.id}`}
+                              type="file"
+                              accept="image/*"
+                              className="hidden"
+                              onChange={(e) => {
+                                const file = e.target.files?.[0] || null;
+                                setReceiptFiles((prev) => ({ ...prev, [bill.id]: file }));
+                              }}
+                            />
+                          </label>
                         </div>
 
-                        {/* Reference Number Input */}
-                        <div className="space-y-2">
-                          <label htmlFor={`ref-${bill.id}`} className="text-xs text-slate-400">GCash Reference Number (13 digits)</label>
-                          <input
-                            id={`ref-${bill.id}`}
-                            type="text"
-                            inputMode="numeric"
-                            maxLength={13}
-                            placeholder="e.g. 1234567890123"
-                            value={refInputs[bill.id] || ''}
-                            onChange={(e) => {
-                              const val = e.target.value.replace(/\D/g, '').slice(0, 13);
-                              setRefInputs((p) => ({ ...p, [bill.id]: val }));
-                              setSubmitStates((p) => ({ ...p, [bill.id]: 'idle' }));
-                            }}
-                            className="w-full bg-white/5 border border-white/10 text-white rounded-xl px-4 py-3 font-mono text-sm focus:outline-none focus:border-indigo-500/60 focus:ring-1 focus:ring-indigo-500/30 transition-all placeholder-slate-600"
-                          />
-                          {submitMessages[bill.id] && (
-                            <p className={`text-xs ${submitStates[bill.id] === 'error' ? 'text-red-400' : 'text-green-400'}`}>
-                              {submitMessages[bill.id]}
-                            </p>
-                          )}
-                          <button
-                            id={`submit-ref-${bill.id}`}
-                            onClick={() => handleSubmit(bill.id)}
-                            disabled={submitStates[bill.id] === 'loading' || submitStates[bill.id] === 'success'}
-                            className="w-full py-3 rounded-xl font-semibold text-sm transition-all bg-indigo-600 hover:bg-indigo-500 text-white disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98]"
-                          >
-                            {submitStates[bill.id] === 'loading' ? 'Submitting...' : submitStates[bill.id] === 'success' ? '✓ Submitted' : 'Submit Reference Number'}
-                          </button>
-                        </div>
+                        {submitMessages[bill.id] && (
+                          <p className={`text-xs ${submitStates[bill.id] === 'error' ? 'text-red-400' : 'text-green-400'}`}>
+                            {submitMessages[bill.id]}
+                          </p>
+                        )}
+                        <button
+                          disabled={!receiptFiles[bill.id] || submitStates[bill.id] === 'loading'}
+                          onClick={async () => {
+                            setSubmitStates((prev) => ({ ...prev, [bill.id]: 'loading' }));
+                            setSubmitMessages((prev) => ({ ...prev, [bill.id]: '' }));
+                            try {
+                              const formData = new FormData();
+                              formData.append('billId', bill.id.toString());
+                              const file = receiptFiles[bill.id];
+                              if (file) {
+                                formData.append('receipt', file);
+                              }
+                              
+                              const res = await fetch('/api/payments/upload', {
+                                method: 'POST',
+                                body: formData,
+                              });
+                              
+                              if (!res.ok) throw new Error('Upload failed');
+                              setSubmitStates((prev) => ({ ...prev, [bill.id]: 'success' }));
+                              setSubmitMessages((prev) => ({ ...prev, [bill.id]: 'Receipt uploaded for review!' }));
+                              
+                              // Refresh bills to show it as pending
+                              fetchBills(selectedTenantId);
+                            } catch (e) {
+                              console.error(e);
+                              setSubmitStates((prev) => ({ ...prev, [bill.id]: 'error' }));
+                              setSubmitMessages((prev) => ({ ...prev, [bill.id]: 'Upload failed. Please try again.' }));
+                            }
+                          }}
+                          className={`w-full py-3.5 rounded-xl font-semibold shadow-lg transition-all active:scale-[0.98] mt-4 flex items-center justify-center gap-2 ${
+                            receiptFiles[bill.id]
+                              ? 'bg-gradient-to-r from-indigo-500 to-cyan-500 hover:from-indigo-400 hover:to-cyan-400 text-white shadow-indigo-500/20'
+                              : 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700/50'
+                          }`}
+                        >
+                          {submitStates[bill.id] === 'loading' ? (
+                            <>
+                              <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                              Uploading...
+                            </>
+                          ) : (
+                            'Submit Receipt'
+                        </button>
                       </div>
                     ))}
                   </section>
