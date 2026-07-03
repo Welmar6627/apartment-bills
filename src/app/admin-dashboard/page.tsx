@@ -73,6 +73,12 @@ function AdminDashboardContent() {
   // Delete tenant states
   const [deleteStates, setDeleteStates] = useState<Record<number, 'idle' | 'loading'>>({});
   const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
+  // Edit tenant states
+  const [editingTenant, setEditingTenant] = useState<number | null>(null);
+  const [eFirstName, setEFirstName] = useState('');
+  const [eLastName, setELastName] = useState('');
+  const [eRoom, setERoom] = useState('');
+  const [editStates, setEditStates] = useState<Record<number, 'idle' | 'loading'>>({});
   const [viewingImage, setViewingImage] = useState<string | null>(null);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
@@ -139,37 +145,95 @@ function AdminDashboardContent() {
     }
   };
 
+  const splitName = (fullName: string) => {
+    const parts = fullName.trim().split(/\s+/);
+    if (parts.length <= 1) return { first: parts[0] || '', last: '' };
+    return { first: parts[0], last: parts.slice(1).join(' ') };
+  };
+
+  const startEditTenant = (tenant: Tenant) => {
+    const { first, last } = splitName(tenant.name);
+    setEditingTenant(tenant.id);
+    setEFirstName(first);
+    setELastName(last);
+    setERoom(tenant.room_number || '');
+  };
+
+  const cancelEditTenant = () => {
+    setEditingTenant(null);
+    setEFirstName('');
+    setELastName('');
+    setERoom('');
+  };
+
+  const handleUpdateTenant = async (tenantId: number) => {
+    if (!eFirstName.trim() || !eLastName.trim()) return;
+
+    const fullName = `${eFirstName.trim()} ${eLastName.trim()}`;
+    const roomNumber = eRoom.trim() || null;
+    const previousTenants = [...tenants];
+
+    setTenants((prev) =>
+      prev.map((t) =>
+        t.id === tenantId ? { ...t, name: fullName, room_number: roomNumber } : t
+      )
+    );
+    setEditStates((p) => ({ ...p, [tenantId]: 'loading' }));
+    showToast(`Updating tenant ${fullName}...`, 'success');
+
+    try {
+      const res = await fetch(`/api/tenants/${tenantId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: fullName, room_number: roomNumber }),
+      });
+      if (!res.ok) throw new Error();
+      const updated = await res.json();
+      setTenants((prev) => prev.map((t) => (t.id === tenantId ? updated : t)));
+      cancelEditTenant();
+      showToast(`Updated tenant ${fullName}!`, 'success');
+    } catch {
+      setTenants(previousTenants);
+      showToast(`Failed to update tenant.`, 'error');
+    } finally {
+      setEditStates((p) => ({ ...p, [tenantId]: 'idle' }));
+    }
+  };
+
   const handleCreateTenant = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!tFirstName || !tLastName) return;
-    
-    const fullName = `${tFirstName.trim()} ${tLastName.trim()}`;
+
+    const firstName = tFirstName.trim();
+    const lastName = tLastName.trim();
+    const roomNumber = tRoom.trim() || null;
+    const fullName = `${firstName} ${lastName}`;
     const tempId = -Math.floor(Math.random() * 1000000);
     const newTenantObj: Tenant = {
       id: tempId,
       name: fullName,
-      room_number: tRoom.trim() || null
+      room_number: roomNumber,
     };
 
-    // Optimistically add tenant to UI
     const previousTenants = [...tenants];
-    setTenants(prev => [...prev, newTenantObj]);
-    setTFirstName(''); setTLastName(''); setTRoom('');
+    setTenants((prev) => [...prev, newTenantObj]);
+    setTFirstName('');
+    setTLastName('');
+    setTRoom('');
     showToast(`Adding tenant ${fullName}...`, 'success');
 
     try {
       const res = await fetch('/api/tenants', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ first_name: tFirstName, last_name: tLastName, room_number: tRoom }),
+        body: JSON.stringify({ first_name: firstName, last_name: lastName, room_number: roomNumber }),
       });
       if (!res.ok) throw new Error();
       const realTenant = await res.json();
       
       // Update with the real database object (id)
-      setTenants(prev => prev.map(t => t.id === tempId ? realTenant : t));
+      setTenants((prev) => prev.map((t) => (t.id === tempId ? realTenant : t)));
       showToast(`Successfully added tenant ${fullName}!`, 'success');
-      fetchData();
     } catch {
       // Rollback
       setTenants(previousTenants);
@@ -191,7 +255,6 @@ function AdminDashboardContent() {
       const res = await fetch(`/api/tenants/${tenantId}`, { method: 'DELETE' });
       if (!res.ok) throw new Error();
       showToast(`Successfully deleted tenant ${targetTenant.name}!`, 'success');
-      fetchData();
     } catch (e) {
       console.error(e);
       // Rollback
@@ -201,11 +264,31 @@ function AdminDashboardContent() {
   };
 
   const handleAction = async (paymentId: number, status: 'approved' | 'rejected') => {
-    const targetPayment = payments.find(p => p.id === paymentId);
+    const targetPayment = payments.find((p) => p.id === paymentId);
     if (!targetPayment) return;
 
+    const previousPayments = [...payments];
+    const previousOverview = [...overview];
+
+    setPayments((prev) =>
+      prev.map((p) => (p.id === paymentId ? { ...p, status } : p))
+    );
+    if (status === 'approved') {
+      setOverview((prev) =>
+        prev.map((bill) => ({
+          ...bill,
+          tenants: bill.tenants.map((t) =>
+            t.name === targetPayment.tenant_name ? { ...t, payment_status: 'approved' } : t
+          ),
+        }))
+      );
+    }
+
     setActionStates((p) => ({ ...p, [paymentId]: 'loading' }));
-    showToast(`${status === 'approved' ? 'Approving' : 'Rejecting'} payment for ${targetPayment.tenant_name}...`, 'success');
+    showToast(
+      `${status === 'approved' ? 'Approving' : 'Rejecting'} payment for ${targetPayment.tenant_name}...`,
+      'success'
+    );
 
     try {
       const res = await fetch(`/api/payments/${paymentId}`, {
@@ -215,9 +298,10 @@ function AdminDashboardContent() {
       });
       if (!res.ok) throw new Error();
       showToast(`Successfully ${status} payment!`, 'success');
-      fetchData();
     } catch (e) {
       console.error(e);
+      setPayments(previousPayments);
+      setOverview(previousOverview);
       showToast(`Failed to update payment status.`, 'error');
     } finally {
       setActionStates((p) => ({ ...p, [paymentId]: 'idle' }));
@@ -228,14 +312,28 @@ function AdminDashboardContent() {
     const key = `${billId}-${tenantId}`;
     const previousOverview = [...overview];
 
-    // Optimistically update overview status to approved
-    setOverview(prev => prev.map(bill => {
-      if (bill.id !== billId) return bill;
-      return {
-        ...bill,
-        tenants: bill.tenants.map(t => t.id === tenantId ? { ...t, payment_status: 'approved' } : t)
-      };
-    }));
+    setOverview((prev) =>
+      prev.map((bill) => {
+        if (bill.id !== billId) return bill;
+        return {
+          ...bill,
+          tenants: bill.tenants.map((t) =>
+            t.id === tenantId ? { ...t, payment_status: 'approved' } : t
+          ),
+        };
+      })
+    );
+    setPayments((prev) =>
+      prev.map((p) => {
+        const tenant = overview
+          .find((b) => b.id === billId)
+          ?.tenants.find((t) => t.id === tenantId);
+        if (tenant?.payment_id && p.id === tenant.payment_id) {
+          return { ...p, status: 'approved' as const, reference_number: 'CASH' };
+        }
+        return p;
+      })
+    );
 
     setCashStates((p) => ({ ...p, [key]: 'loading' }));
     showToast(`Marking cash payment...`, 'success');
@@ -249,7 +347,6 @@ function AdminDashboardContent() {
       if (!res.ok) throw new Error();
       setCashStates((p) => ({ ...p, [key]: 'done' }));
       showToast(`Settled bill in cash!`, 'success');
-      fetchData();
     } catch (e) {
       console.error(e);
       // Rollback
@@ -469,22 +566,76 @@ function AdminDashboardContent() {
                 </div>
               ) : (
                 tenants.map((tenant) => (
-                  <div key={tenant.id} className="glass-card p-4 flex items-center justify-between gap-3">
-                    <div className="flex items-center gap-3">
-                      <div className="w-9 h-9 rounded-xl bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center shrink-0">
-                        <span className="text-indigo-400 font-bold text-sm">{tenant.name.charAt(0)}</span>
+                  <div key={tenant.id} className="glass-card p-4 space-y-3">
+                    {editingTenant === tenant.id ? (
+                      <div className="space-y-3">
+                        <div className="grid grid-cols-2 gap-3">
+                          <input
+                            type="text"
+                            placeholder="First Name"
+                            value={eFirstName}
+                            onChange={(e) => setEFirstName(e.target.value)}
+                            className="w-full bg-white/5 border border-white/10 text-white rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-indigo-500/60"
+                          />
+                          <input
+                            type="text"
+                            placeholder="Last Name"
+                            value={eLastName}
+                            onChange={(e) => setELastName(e.target.value)}
+                            className="w-full bg-white/5 border border-white/10 text-white rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-indigo-500/60"
+                          />
+                        </div>
+                        <input
+                          type="text"
+                          placeholder="Room / Unit Number"
+                          value={eRoom}
+                          onChange={(e) => setERoom(e.target.value)}
+                          className="w-full bg-white/5 border border-white/10 text-white rounded-xl px-3 py-2.5 text-sm focus:outline-none focus:border-indigo-500/60"
+                        />
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => handleUpdateTenant(tenant.id)}
+                            disabled={editStates[tenant.id] === 'loading'}
+                            className="flex-1 py-2 rounded-lg text-xs font-semibold bg-indigo-600 text-white hover:bg-indigo-500 transition-all disabled:opacity-50"
+                          >
+                            {editStates[tenant.id] === 'loading' ? 'Saving...' : 'Save'}
+                          </button>
+                          <button
+                            onClick={cancelEditTenant}
+                            className="flex-1 py-2 rounded-lg text-xs font-semibold bg-white/5 border border-white/10 text-slate-300 hover:bg-white/10 transition-all"
+                          >
+                            Cancel
+                          </button>
+                        </div>
                       </div>
-                      <div>
-                        <p className="text-white font-semibold text-sm">{tenant.name}</p>
-                        <p className="text-slate-500 text-xs">{tenant.room_number || 'No room assigned'}</p>
+                    ) : (
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="flex items-center gap-3">
+                          <div className="w-9 h-9 rounded-xl bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center shrink-0">
+                            <span className="text-indigo-400 font-bold text-sm">{tenant.name.charAt(0)}</span>
+                          </div>
+                          <div>
+                            <p className="text-white font-semibold text-sm">{tenant.name}</p>
+                            <p className="text-slate-500 text-xs">{tenant.room_number || 'No room assigned'}</p>
+                          </div>
+                        </div>
+                        <div className="flex gap-2 shrink-0">
+                          <button
+                            onClick={() => startEditTenant(tenant)}
+                            className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 hover:bg-indigo-500/20 transition-all"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            onClick={() => setConfirmDelete(tenant.id)}
+                            disabled={tenant.id < 0}
+                            className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-red-500/10 border border-red-500/20 text-red-400 hover:bg-red-500/20 transition-all disabled:opacity-40"
+                          >
+                            Delete
+                          </button>
+                        </div>
                       </div>
-                    </div>
-                    <button
-                      onClick={() => setConfirmDelete(tenant.id)}
-                      className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-red-500/10 border border-red-500/20 text-red-400 hover:bg-red-500/20 transition-all"
-                    >
-                      Delete
-                    </button>
+                    )}
                   </div>
                 ))
               )}
@@ -641,8 +792,8 @@ function AdminDashboardContent() {
                         return (
                           <div
                             key={tenant.id}
-                            className={`flex items-center justify-between gap-3 rounded-xl p-3 border transition-all
-                              ${tenant.payment_status === 'approved' ? 'bg-green-500/5 border-green-500/20' :
+                            className={`flex items-center justify-between gap-3 rounded-xl p-3 border transition-all duration-500
+                              ${tenant.payment_status === 'approved' ? 'bg-green-500/5 border-green-500/20 opacity-60' :
                                 tenant.payment_status === 'pending' ? 'bg-yellow-500/5 border-yellow-500/20' :
                                 'bg-white/3 border-white/8'}`}
                           >
