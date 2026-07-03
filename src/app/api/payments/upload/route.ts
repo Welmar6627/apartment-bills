@@ -18,21 +18,13 @@ export async function POST(req: Request) {
     const fileUrl = 'uploaded_receipt_' + Date.now() + '.jpg';
 
     // Insert or update payment record
-    const paymentCheck = await pool.query('SELECT id FROM payments WHERE bill_id = $1 AND tenant_id = $2', [billId, tenantId]);
-    
-    if (paymentCheck.rowCount && paymentCheck.rowCount > 0) {
-      // Update existing payment
-      await pool.query(
-        'UPDATE payments SET status = $1, reference_number = $2 WHERE id = $3',
-        ['pending', fileUrl, paymentCheck.rows[0].id]
-      );
-    } else {
-      // Insert new payment
-      await pool.query(
-        'INSERT INTO payments (bill_id, tenant_id, amount, status, reference_number) VALUES ($1, $2, (SELECT per_person_amount FROM bills WHERE id = $1), $3, $4)',
-        [billId, tenantId, 'pending', fileUrl]
-      );
-    }
+    await pool.query(
+      `INSERT INTO payments (bill_id, tenant_id, reference_number, status)
+       VALUES ($1, $2, $3, 'pending')
+       ON CONFLICT (bill_id, tenant_id)
+       DO UPDATE SET reference_number = EXCLUDED.reference_number, status = 'pending', created_at = NOW()`,
+      [billId, tenantId, fileUrl]
+    );
 
     return NextResponse.json({ success: true });
   } catch (error) {
