@@ -7,11 +7,11 @@ const pool = new Pool({
 
 async function run() {
   try {
-    console.log('Adding receipt_image column...');
-    await pool.query('ALTER TABLE payments ADD COLUMN IF NOT EXISTS receipt_image TEXT;');
-    console.log('Successfully altered table.');
+    console.log('Adding room_number column to tenants...');
+    await pool.query(`ALTER TABLE tenants ADD COLUMN IF NOT EXISTS room_number VARCHAR(20);`);
+    console.log('Done.');
   } catch (error) {
-    console.error('Error altering table:', error);
+    console.error('Error:', error.message);
   } finally {
     pool.end();
   }
