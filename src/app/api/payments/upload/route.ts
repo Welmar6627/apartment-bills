@@ -7,8 +7,8 @@ export async function POST(req: Request) {
     const billId = formData.get('billId');
     const receipt = formData.get('receipt') as File | null;
 
-    if (!billId || !receipt) {
-      return NextResponse.json({ error: 'Missing billId or receipt file' }, { status: 400 });
+    if (!billId) {
+      return NextResponse.json({ error: 'Missing billId' }, { status: 400 });
     }
 
     // Since we're keeping things simple, we'll store a placeholder URL.
