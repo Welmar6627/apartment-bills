@@ -199,21 +199,7 @@ export default function TenantPortal() {
                             {copied ? '✓ Copied!' : 'Copy'}
                           </button>
                         </div>
-                        <div className="pt-1">
-                          {isMobile ? (
-                            <a
-                              href="gcash://"
-                              className="block w-full py-3 rounded-xl text-center text-xs font-semibold bg-cyan-500/20 border border-cyan-500/40 text-cyan-400 hover:bg-cyan-500/30 transition-all active:scale-[0.98]"
-                            >
-                              📲 Open GCash App
-                            </a>
-                          ) : (
-                            <div className="flex items-center justify-center gap-1.5 py-2 text-slate-600 text-xs">
-                              <span>📱</span>
-                              <span>Open GCash App button appears on mobile devices</span>
-                            </div>
-                          )}
-                        </div>
+
                         <p className="text-slate-500 text-xs">After paying, enter your 13-digit reference number below.</p>
                       </div>
                     </div>
@@ -247,6 +233,22 @@ export default function TenantPortal() {
                             <p className="text-red-400 text-xs">Your previous submission was rejected. Please re-submit.</p>
                           </div>
                         )}
+
+                        {/* Receipt Upload */}
+                        <div className="space-y-2">
+                          <label htmlFor={`receipt-${bill.id}`} className="text-xs text-slate-400">Upload receipt image</label>
+                          <input
+                            id={`receipt-${bill.id}`}
+                            type="file"
+                            accept="image/*"
+                            onChange={(e) => {
+                              const file = e.target.files?.[0] || null;
+                              setRefInputs((prev) => ({ ...prev, [bill.id]: file ? file.name : '' }));
+                              // Store file in a separate state (receiptFiles)
+                              setReceiptFiles((prev) => ({ ...prev, [bill.id]: file }));
+                            }}
+                          />
+                        </div>
 
                         {/* Reference Number Input */}
                         <div className="space-y-2">
