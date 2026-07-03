@@ -7,20 +7,15 @@ export async function POST(req: Request) {
     const billId = formData.get('billId');
     const receipt = formData.get('receipt') as File | null;
 
-    if (!billId) {
-      return NextResponse.json({ error: 'Missing billId' }, { status: 400 });
+    const tenantId = formData.get('tenantId');
+
+    if (!billId || !tenantId) {
+      return NextResponse.json({ error: 'Missing billId or tenantId' }, { status: 400 });
     }
 
     // Since we're keeping things simple, we'll store a placeholder URL.
     // In a real production app, you would upload the file to Supabase Storage here.
-    const fileUrl = 'uploaded_receipt_' + Date.now() + '.jpg'; 
-
-    // Look up the existing payment or create one.
-    const billCheck = await pool.query('SELECT tenant_id FROM bills WHERE id = $1', [billId]);
-    if (billCheck.rowCount === 0) {
-        return NextResponse.json({ error: 'Bill not found' }, { status: 404 });
-    }
-    const tenantId = billCheck.rows[0].tenant_id;
+    const fileUrl = 'uploaded_receipt_' + Date.now() + '.jpg';
 
     // Insert or update payment record
     const paymentCheck = await pool.query('SELECT id FROM payments WHERE bill_id = $1 AND tenant_id = $2', [billId, tenantId]);

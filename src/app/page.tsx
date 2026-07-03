@@ -250,6 +250,7 @@ export default function TenantPortal() {
                             try {
                               const formData = new FormData();
                               formData.append('billId', bill.id.toString());
+                              formData.append('tenantId', selectedTenantId);
                               // We skip appending the actual file binary to avoid Vercel's 4.5MB serverless limit!
                               // We just pass the billId to mock a successful upload.
 
