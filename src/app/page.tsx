@@ -33,6 +33,12 @@ export default function TenantPortal() {
   const [copied, setCopied] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [receiptFiles, setReceiptFiles] = useState<Record<number, File | null>>({});
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+
+  const showToast = (message: string, type: 'success' | 'error') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 4000);
+  };
 
   useEffect(() => {
     setIsMobile(/Android|iPhone|iPad|iPod/i.test(navigator.userAgent));
@@ -245,8 +251,14 @@ export default function TenantPortal() {
                         <button
                           disabled={!receiptFiles[bill.id] || submitStates[bill.id] === 'loading'}
                           onClick={async () => {
+                            const backupBills = [...bills];
+                            
+                            // Optimistically set status to pending so it moves from outstanding instantly
+                            setBills(prev => prev.map(b => b.id === bill.id ? { ...b, payment_status: 'pending', reference_number: 'PENDING' } : b));
                             setSubmitStates((prev) => ({ ...prev, [bill.id]: 'loading' }));
                             setSubmitMessages((prev) => ({ ...prev, [bill.id]: '' }));
+                            showToast(`Submitting receipt for ${bill.title}...`, 'success');
+
                             try {
                               const file = receiptFiles[bill.id];
                               if (!file) throw new Error('No file selected');
@@ -287,13 +299,17 @@ export default function TenantPortal() {
                               if (!res.ok) throw new Error('Upload failed');
                               setSubmitStates((prev) => ({ ...prev, [bill.id]: 'success' }));
                               setSubmitMessages((prev) => ({ ...prev, [bill.id]: 'Receipt uploaded for review!' }));
+                              showToast(`Successfully submitted receipt for ${bill.title}!`, 'success');
 
-                              // Refresh bills to show it as pending
+                              // Refresh bills in the background to ensure consistency with backend
                               fetchBills(selectedTenantId);
                             } catch (e) {
                               console.error(e);
+                              // Revert optimistic updates on failure
+                              setBills(backupBills);
                               setSubmitStates((prev) => ({ ...prev, [bill.id]: 'error' }));
                               setSubmitMessages((prev) => ({ ...prev, [bill.id]: 'Upload failed. Please try again.' }));
+                              showToast(`Failed to upload receipt for ${bill.title}.`, 'error');
                             }
                           }}
                           className={`w-full py-3.5 rounded-xl font-semibold shadow-lg transition-all active:scale-[0.98] mt-4 flex items-center justify-center gap-2 ${receiptFiles[bill.id]
@@ -364,6 +380,18 @@ export default function TenantPortal() {
           <p className="text-slate-600 text-xs">ApartmentBills · Powered by GCash</p>
         </footer>
       </div>
+
+      {/* Floating Toast Notification */}
+      {toast && (
+        <div className={`fixed bottom-5 right-5 z-50 flex items-center gap-2 px-4 py-3 rounded-xl shadow-2xl transition-all animate-bounce ${
+          toast.type === 'error' 
+            ? 'bg-red-500/20 border border-red-500/30 text-red-400' 
+            : 'bg-green-500/20 border border-green-500/30 text-green-400'
+        }`}>
+          <span>{toast.type === 'error' ? '❌' : '⚡'}</span>
+          <span className="text-sm font-semibold">{toast.message}</span>
+        </div>
+      )}
     </main>
   );
 }

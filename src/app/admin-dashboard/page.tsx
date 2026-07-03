@@ -73,8 +73,13 @@ function AdminDashboardContent() {
   // Delete tenant states
   const [deleteStates, setDeleteStates] = useState<Record<number, 'idle' | 'loading'>>({});
   const [confirmDelete, setConfirmDelete] = useState<number | null>(null);
-  // Receipt image modal
   const [viewingImage, setViewingImage] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
+
+  const showToast = (message: string, type: 'success' | 'error') => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 4000);
+  };
 
   useEffect(() => {
     if (pin === correctPin) setAuthorized(true);
@@ -137,7 +142,21 @@ function AdminDashboardContent() {
   const handleCreateTenant = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!tFirstName || !tLastName) return;
-    setTenantCreateStatus('loading');
+    
+    const fullName = `${tFirstName.trim()} ${tLastName.trim()}`;
+    const tempId = -Math.floor(Math.random() * 1000000);
+    const newTenantObj: Tenant = {
+      id: tempId,
+      name: fullName,
+      room_number: tRoom.trim() || null
+    };
+
+    // Optimistically add tenant to UI
+    const previousTenants = [...tenants];
+    setTenants(prev => [...prev, newTenantObj]);
+    setTFirstName(''); setTLastName(''); setTRoom('');
+    showToast(`Adding tenant ${fullName}...`, 'success');
+
     try {
       const res = await fetch('/api/tenants', {
         method: 'POST',
@@ -145,41 +164,61 @@ function AdminDashboardContent() {
         body: JSON.stringify({ first_name: tFirstName, last_name: tLastName, room_number: tRoom }),
       });
       if (!res.ok) throw new Error();
-      setTenantCreateStatus('success');
-      setTenantCreateMessage(`Tenant "${tFirstName} ${tLastName}" added!`);
-      setTFirstName(''); setTLastName(''); setTRoom('');
+      const realTenant = await res.json();
+      
+      // Update with the real database object (id)
+      setTenants(prev => prev.map(t => t.id === tempId ? realTenant : t));
+      showToast(`Successfully added tenant ${fullName}!`, 'success');
       fetchData();
     } catch {
-      setTenantCreateStatus('error');
-      setTenantCreateMessage('Failed to add tenant. Please try again.');
+      // Rollback
+      setTenants(previousTenants);
+      showToast(`Failed to add tenant ${fullName}.`, 'error');
     }
   };
 
   const handleDeleteTenant = async (tenantId: number) => {
-    setDeleteStates((p) => ({ ...p, [tenantId]: 'loading' }));
+    const targetTenant = tenants.find(t => t.id === tenantId);
+    if (!targetTenant) return;
+
+    // Optimistically remove tenant
+    const previousTenants = [...tenants];
+    setTenants(prev => prev.filter((t) => t.id !== tenantId));
+    setConfirmDelete(null);
+    showToast(`Deleting tenant ${targetTenant.name}...`, 'success');
+
     try {
-      await fetch(`/api/tenants/${tenantId}`, { method: 'DELETE' });
-      setTenants((prev) => prev.filter((t) => t.id !== tenantId));
-      setConfirmDelete(null);
+      const res = await fetch(`/api/tenants/${tenantId}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error();
+      showToast(`Successfully deleted tenant ${targetTenant.name}!`, 'success');
       fetchData();
     } catch (e) {
       console.error(e);
-    } finally {
-      setDeleteStates((p) => ({ ...p, [tenantId]: 'idle' }));
+      // Rollback
+      setTenants(previousTenants);
+      showToast(`Failed to delete tenant ${targetTenant.name}.`, 'error');
     }
   };
 
   const handleAction = async (paymentId: number, status: 'approved' | 'rejected') => {
+    const targetPayment = payments.find(p => p.id === paymentId);
+    if (!targetPayment) return;
+
     setActionStates((p) => ({ ...p, [paymentId]: 'loading' }));
+    showToast(`${status === 'approved' ? 'Approving' : 'Rejecting'} payment for ${targetPayment.tenant_name}...`, 'success');
+
     try {
-      await fetch(`/api/payments/${paymentId}`, {
+      const res = await fetch(`/api/payments/${paymentId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status }),
       });
+      if (!res.ok) throw new Error();
+      showToast(`Successfully ${status} payment!`, 'success');
       fetchData();
     } catch (e) {
       console.error(e);
+      showToast(`Failed to update payment status.`, 'error');
     } finally {
       setActionStates((p) => ({ ...p, [paymentId]: 'idle' }));
     }
@@ -187,7 +226,20 @@ function AdminDashboardContent() {
 
   const handleCashPayment = async (billId: number, tenantId: number) => {
     const key = `${billId}-${tenantId}`;
+    const previousOverview = [...overview];
+
+    // Optimistically update overview status to approved
+    setOverview(prev => prev.map(bill => {
+      if (bill.id !== billId) return bill;
+      return {
+        ...bill,
+        tenants: bill.tenants.map(t => t.id === tenantId ? { ...t, payment_status: 'approved' } : t)
+      };
+    }));
+
     setCashStates((p) => ({ ...p, [key]: 'loading' }));
+    showToast(`Marking cash payment...`, 'success');
+
     try {
       const res = await fetch('/api/payments/cash', {
         method: 'POST',
@@ -196,10 +248,14 @@ function AdminDashboardContent() {
       });
       if (!res.ok) throw new Error();
       setCashStates((p) => ({ ...p, [key]: 'done' }));
+      showToast(`Settled bill in cash!`, 'success');
       fetchData();
     } catch (e) {
       console.error(e);
+      // Rollback
+      setOverview(previousOverview);
       setCashStates((p) => ({ ...p, [key]: 'idle' }));
+      showToast(`Failed to record cash payment.`, 'error');
     }
   };
 
@@ -623,6 +679,18 @@ function AdminDashboardContent() {
           <p className="text-slate-600 text-xs">ApartmentBills Admin · Secured by PIN</p>
         </footer>
       </div>
+
+      {/* Floating Toast Notification */}
+      {toast && (
+        <div className={`fixed bottom-5 right-5 z-50 flex items-center gap-2 px-4 py-3 rounded-xl shadow-2xl transition-all animate-bounce ${
+          toast.type === 'error' 
+            ? 'bg-red-500/20 border border-red-500/30 text-red-400' 
+            : 'bg-green-500/20 border border-green-500/30 text-green-400'
+        }`}>
+          <span>{toast.type === 'error' ? '❌' : '⚡'}</span>
+          <span className="text-sm font-semibold">{toast.message}</span>
+        </div>
+      )}
     </main>
   );
 }
