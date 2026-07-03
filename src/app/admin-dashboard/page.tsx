@@ -11,6 +11,7 @@ interface Payment {
   tenant_name: string;
   bill_title: string;
   per_person_amount: string;
+  receipt_image: string | null;
 }
 
 interface BillOverview {
@@ -45,6 +46,7 @@ function AdminDashboardContent() {
 
   // Action states for approve/reject
   const [actionStates, setActionStates] = useState<Record<number, 'idle' | 'loading'>>({});
+  const [viewingImage, setViewingImage] = useState<string | null>(null);
 
   useEffect(() => {
     if (pin === correctPin) {
@@ -172,6 +174,28 @@ function AdminDashboardContent() {
 
   return (
     <main className="bg-animated min-h-screen">
+      {/* Receipt Image Viewer Modal */}
+      {viewingImage && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
+          onClick={() => setViewingImage(null)}
+        >
+          <div className="relative max-w-2xl w-full" onClick={(e) => e.stopPropagation()}>
+            <button
+              onClick={() => setViewingImage(null)}
+              className="absolute -top-10 right-0 text-white/60 hover:text-white text-sm"
+            >
+              ✕ Close
+            </button>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={viewingImage}
+              alt="Receipt"
+              className="w-full rounded-2xl border border-white/10 shadow-2xl"
+            />
+          </div>
+        </div>
+      )}
       {/* Header */}
       <header className="glass-card rounded-none border-x-0 border-t-0 px-4 py-4 sticky top-0 z-50">
         <div className="max-w-4xl mx-auto flex items-center justify-between">
@@ -322,6 +346,28 @@ function AdminDashboardContent() {
                         </span>
                       </div>
                     </div>
+
+                    {/* Receipt Image Thumbnail */}
+                    {payment.receipt_image ? (
+                      <button
+                        onClick={() => setViewingImage(payment.receipt_image!)}
+                        className="w-full mb-3 rounded-xl overflow-hidden border border-white/10 hover:border-indigo-500/50 transition-all group relative"
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={payment.receipt_image}
+                          alt="Receipt"
+                          className="w-full h-32 object-cover object-top group-hover:opacity-80 transition-opacity"
+                        />
+                        <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/40">
+                          <span className="text-white text-xs font-semibold bg-black/60 px-3 py-1.5 rounded-full">🔍 View Full Receipt</span>
+                        </div>
+                      </button>
+                    ) : (
+                      <div className="w-full mb-3 rounded-xl border border-white/5 bg-white/3 h-16 flex items-center justify-center text-slate-600 text-xs">
+                        No receipt image
+                      </div>
+                    )}
 
                     {payment.status === 'pending' && (
                       <div className="flex gap-2 pt-2 border-t border-white/5">

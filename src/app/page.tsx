@@ -248,15 +248,40 @@ export default function TenantPortal() {
                             setSubmitStates((prev) => ({ ...prev, [bill.id]: 'loading' }));
                             setSubmitMessages((prev) => ({ ...prev, [bill.id]: '' }));
                             try {
-                              const formData = new FormData();
-                              formData.append('billId', bill.id.toString());
-                              formData.append('tenantId', selectedTenantId);
-                              // We skip appending the actual file binary to avoid Vercel's 4.5MB serverless limit!
-                              // We just pass the billId to mock a successful upload.
+                              const file = receiptFiles[bill.id];
+                              if (!file) throw new Error('No file selected');
+
+                              // Compress image client-side using canvas to stay under Vercel's 4.5MB limit
+                              const base64Image = await new Promise<string>((resolve, reject) => {
+                                const reader = new FileReader();
+                                reader.onload = (ev) => {
+                                  const img = new window.Image();
+                                  img.onload = () => {
+                                    const canvas = document.createElement('canvas');
+                                    const MAX_WIDTH = 800;
+                                    const scale = Math.min(1, MAX_WIDTH / img.width);
+                                    canvas.width = img.width * scale;
+                                    canvas.height = img.height * scale;
+                                    const ctx = canvas.getContext('2d');
+                                    if (!ctx) return reject('Canvas not supported');
+                                    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                                    resolve(canvas.toDataURL('image/jpeg', 0.6));
+                                  };
+                                  img.onerror = reject;
+                                  img.src = ev.target?.result as string;
+                                };
+                                reader.onerror = reject;
+                                reader.readAsDataURL(file);
+                              });
 
                               const res = await fetch('/api/payments/upload', {
                                 method: 'POST',
-                                body: formData,
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                  billId: bill.id,
+                                  tenantId: selectedTenantId,
+                                  receiptImage: base64Image,
+                                }),
                               });
 
                               if (!res.ok) throw new Error('Upload failed');

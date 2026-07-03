@@ -10,6 +10,7 @@ export async function GET() {
         p.reference_number,
         p.status,
         p.created_at,
+        p.receipt_image,
         t.name AS tenant_name,
         b.title AS bill_title,
         b.per_person_amount
