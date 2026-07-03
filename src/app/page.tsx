@@ -284,6 +284,7 @@ export default function TenantPortal() {
                             </>
                           ) : (
                             'Submit Receipt'
+                          )}
                         </button>
                       </div>
                     ))}
