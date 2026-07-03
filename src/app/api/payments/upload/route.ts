@@ -14,8 +14,7 @@ export async function POST(req: Request) {
     }
 
     // In a real production app, you would upload the file to Supabase Storage here.
-    // The reference_number column is limited to VARCHAR(13), so we generate a short 13-character ID:
-    const fileUrl = 'IMG_' + Date.now().toString().slice(-9);
+    const fileUrl = 'IMG_' + Math.floor(100000 + Math.random() * 900000).toString(); // Always 10 chars
 
     // Insert or update payment record
     await pool.query(
