@@ -13,9 +13,9 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Missing billId or tenantId' }, { status: 400 });
     }
 
-    // Since we're keeping things simple, we'll store a placeholder URL.
     // In a real production app, you would upload the file to Supabase Storage here.
-    const fileUrl = 'uploaded_receipt_' + Date.now() + '.jpg';
+    // The reference_number column is limited to VARCHAR(13), so we generate a short 13-character ID:
+    const fileUrl = 'IMG_' + Date.now().toString().slice(-9);
 
     // Insert or update payment record
     await pool.query(
