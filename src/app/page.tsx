@@ -107,6 +107,10 @@ export default function TenantPortal() {
   const pendingBills = bills.filter((b) => b.payment_status === 'pending');
   const approvedBills = bills.filter((b) => b.payment_status === 'approved');
 
+  function setReceiptFiles(arg0: (prev: any) => any) {
+    throw new Error('Function not implemented.');
+  }
+
   return (
     <main className="bg-animated min-h-screen">
       {/* Header */}
