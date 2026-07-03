@@ -254,16 +254,16 @@ export default function TenantPortal() {
                               if (file) {
                                 formData.append('receipt', file);
                               }
-                              
+
                               const res = await fetch('/api/payments/upload', {
                                 method: 'POST',
                                 body: formData,
                               });
-                              
+
                               if (!res.ok) throw new Error('Upload failed');
                               setSubmitStates((prev) => ({ ...prev, [bill.id]: 'success' }));
                               setSubmitMessages((prev) => ({ ...prev, [bill.id]: 'Receipt uploaded for review!' }));
-                              
+
                               // Refresh bills to show it as pending
                               fetchBills(selectedTenantId);
                             } catch (e) {
@@ -272,11 +272,10 @@ export default function TenantPortal() {
                               setSubmitMessages((prev) => ({ ...prev, [bill.id]: 'Upload failed. Please try again.' }));
                             }
                           }}
-                          className={`w-full py-3.5 rounded-xl font-semibold shadow-lg transition-all active:scale-[0.98] mt-4 flex items-center justify-center gap-2 ${
-                            receiptFiles[bill.id]
-                              ? 'bg-gradient-to-r from-indigo-500 to-cyan-500 hover:from-indigo-400 hover:to-cyan-400 text-white shadow-indigo-500/20'
-                              : 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700/50'
-                          }`}
+                          className={`w-full py-3.5 rounded-xl font-semibold shadow-lg transition-all active:scale-[0.98] mt-4 flex items-center justify-center gap-2 ${receiptFiles[bill.id]
+                            ? 'bg-gradient-to-r from-indigo-500 to-cyan-500 hover:from-indigo-400 hover:to-cyan-400 text-white shadow-indigo-500/20'
+                            : 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700/50'
+                            }`}
                         >
                           {submitStates[bill.id] === 'loading' ? (
                             <>
