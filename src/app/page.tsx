@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useOptimistic, useTransition } from 'react';
+import { useState, useEffect, useCallback, useOptimistic, useTransition, useRef } from 'react';
 import Image from 'next/image';
 
 interface Tenant {
@@ -26,17 +26,51 @@ type BillAction =
   | { type: 'revert'; billId: number; previous: Bill };
 
 const GCASH_NUMBER = '09302374431';
+const MAX_FILE_SIZE = 5 * 1024 * 1024;
+
+async function compressImageToBlob(file: File): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const img = new window.Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const MAX_WIDTH = 800;
+        const scale = Math.min(1, MAX_WIDTH / img.width);
+        canvas.width = img.width * scale;
+        canvas.height = img.height * scale;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) return reject(new Error('Canvas not supported'));
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        canvas.toBlob(
+          (blob) => (blob ? resolve(blob) : reject(new Error('Compression failed'))),
+          'image/jpeg',
+          0.6
+        );
+      };
+      img.onerror = () => reject(new Error('Invalid image'));
+      img.src = ev.target?.result as string;
+    };
+    reader.onerror = () => reject(new Error('Failed to read file'));
+    reader.readAsDataURL(file);
+  });
+}
 
 export default function TenantPortal() {
   const [tenants, setTenants] = useState<Tenant[]>([]);
   const [selectedTenantId, setSelectedTenantId] = useState<string>('');
   const [bills, setBills] = useState<Bill[]>([]);
   const [loadingBills, setLoadingBills] = useState(false);
-  const [referenceInputs, setReferenceInputs] = useState<Record<number, string>>({});
+  const [receiptFiles, setReceiptFiles] = useState<Record<number, File | null>>({});
+  const [previewUrls, setPreviewUrls] = useState<Record<number, string>>({});
+  const [dragOver, setDragOver] = useState<Record<number, boolean>>({});
   const [submitStates, setSubmitStates] = useState<Record<number, 'idle' | 'loading' | 'success' | 'error'>>({});
   const [copied, setCopied] = useState(false);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
   const [, startTransition] = useTransition();
+  const previewUrlsRef = useRef(previewUrls);
+
+  previewUrlsRef.current = previewUrls;
 
   const [optimisticBills, addOptimisticBill] = useOptimistic(
     bills,
@@ -64,6 +98,12 @@ export default function TenantPortal() {
       .catch(console.error);
   }, []);
 
+  useEffect(() => {
+    return () => {
+      Object.values(previewUrlsRef.current).forEach((url) => URL.revokeObjectURL(url));
+    };
+  }, []);
+
   const fetchBills = useCallback(async (tenantId: string) => {
     if (!tenantId) return;
     setLoadingBills(true);
@@ -78,11 +118,42 @@ export default function TenantPortal() {
     }
   }, []);
 
+  const clearReceipt = (billId: number) => {
+    setReceiptFiles((prev) => ({ ...prev, [billId]: null }));
+    setPreviewUrls((prev) => {
+      if (prev[billId]) URL.revokeObjectURL(prev[billId]);
+      const next = { ...prev };
+      delete next[billId];
+      return next;
+    });
+  };
+
+  const assignReceiptFile = (billId: number, file: File | null) => {
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      showToast('Please upload an image file (PNG, JPG, etc.).', 'error');
+      return;
+    }
+    if (file.size > MAX_FILE_SIZE) {
+      showToast('Image must be under 5MB.', 'error');
+      return;
+    }
+    setReceiptFiles((prev) => ({ ...prev, [billId]: file }));
+    setPreviewUrls((prev) => {
+      if (prev[billId]) URL.revokeObjectURL(prev[billId]);
+      return { ...prev, [billId]: URL.createObjectURL(file) };
+    });
+    setSubmitStates((prev) => ({ ...prev, [billId]: 'idle' }));
+  };
+
   const handleTenantChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const id = e.target.value;
     setSelectedTenantId(id);
     setBills([]);
-    setReferenceInputs({});
+    Object.values(previewUrls).forEach((url) => URL.revokeObjectURL(url));
+    setReceiptFiles({});
+    setPreviewUrls({});
+    setDragOver({});
     setSubmitStates({});
     if (id) fetchBills(id);
   };
@@ -94,56 +165,65 @@ export default function TenantPortal() {
   };
 
   const handleSubmitPayment = async (bill: Bill) => {
-    const ref = referenceInputs[bill.id]?.trim() || '';
-    if (!/^\d{13}$/.test(ref)) {
-      showToast('Reference number must be exactly 13 digits.', 'error');
+    const file = receiptFiles[bill.id];
+    if (!file) {
+      showToast('Please upload your GCash receipt first.', 'error');
       return;
     }
 
     const previousBill = { ...bill };
+    const savedFile = file;
     setSubmitStates((prev) => ({ ...prev, [bill.id]: 'loading' }));
 
     startTransition(() => {
-      addOptimisticBill({ type: 'submit', billId: bill.id, reference: ref });
+      addOptimisticBill({ type: 'submit', billId: bill.id, reference: 'PENDING' });
     });
 
     setBills((prev) =>
       prev.map((b) =>
-        b.id === bill.id ? { ...b, payment_status: 'pending', reference_number: ref } : b
+        b.id === bill.id ? { ...b, payment_status: 'pending', reference_number: 'PENDING' } : b
       )
     );
-    setReferenceInputs((prev) => ({ ...prev, [bill.id]: '' }));
-    showToast(`Payment submitted for ${bill.title} — verification pending.`, 'success');
+    clearReceipt(bill.id);
+    showToast(`Receipt submitted for ${bill.title} — verification pending.`, 'success');
 
     try {
-      const res = await fetch('/api/payments', {
+      const compressed = await compressImageToBlob(savedFile);
+      const formData = new FormData();
+      formData.append('billId', String(bill.id));
+      formData.append('tenantId', selectedTenantId);
+      formData.append('receipt', compressed, 'receipt.jpg');
+
+      const res = await fetch('/api/payments/upload', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          bill_id: bill.id,
-          tenant_id: parseInt(selectedTenantId),
-          reference_number: ref,
-        }),
+        body: formData,
       });
 
       if (!res.ok) {
         const err = await res.json().catch(() => ({}));
-        throw new Error(err.error || 'Submission failed');
+        throw new Error(err.error || 'Upload failed');
       }
 
+      const data = await res.json();
+      setBills((prev) =>
+        prev.map((b) =>
+          b.id === bill.id
+            ? { ...b, payment_status: 'pending', reference_number: data.reference_number || 'PENDING' }
+            : b
+        )
+      );
       setSubmitStates((prev) => ({ ...prev, [bill.id]: 'success' }));
     } catch (e) {
       console.error(e);
       startTransition(() => {
         addOptimisticBill({ type: 'revert', billId: bill.id, previous: previousBill });
       });
-      setBills((prev) =>
-        prev.map((b) => (b.id === bill.id ? previousBill : b))
-      );
-      setReferenceInputs((prev) => ({ ...prev, [bill.id]: ref }));
+      setBills((prev) => prev.map((b) => (b.id === bill.id ? previousBill : b)));
+      setReceiptFiles((prev) => ({ ...prev, [bill.id]: savedFile }));
+      setPreviewUrls((prev) => ({ ...prev, [bill.id]: URL.createObjectURL(savedFile) }));
       setSubmitStates((prev) => ({ ...prev, [bill.id]: 'error' }));
       showToast(
-        e instanceof Error ? e.message : `Failed to submit payment for ${bill.title}.`,
+        e instanceof Error ? e.message : `Failed to upload receipt for ${bill.title}.`,
         'error'
       );
     }
@@ -221,32 +301,15 @@ export default function TenantPortal() {
                 {optimisticBills.length > 0 && (
                   <div className="grid grid-cols-3 gap-3">
                     {[
-                      {
-                        label: 'Unpaid',
-                        count: unpaidBills.length,
-                        color: 'text-red-400',
-                        bg: 'bg-red-500/10 border-red-500/20',
-                      },
-                      {
-                        label: 'Pending',
-                        count: pendingBills.length,
-                        color: 'text-yellow-400',
-                        bg: 'bg-yellow-500/10 border-yellow-500/20',
-                      },
-                      {
-                        label: 'Approved',
-                        count: approvedBills.length,
-                        color: 'text-green-400',
-                        bg: 'bg-green-500/10 border-green-500/20',
-                      },
+                      { label: 'Unpaid', count: unpaidBills.length, color: 'text-red-400', bg: 'bg-red-500/10 border-red-500/20' },
+                      { label: 'Pending', count: pendingBills.length, color: 'text-yellow-400', bg: 'bg-yellow-500/10 border-yellow-500/20' },
+                      { label: 'Approved', count: approvedBills.length, color: 'text-green-400', bg: 'bg-green-500/10 border-green-500/20' },
                     ].map((stat) => (
                       <div
                         key={stat.label}
                         className={`glass-card border ${stat.bg} p-3 text-center transition-all duration-300`}
                       >
-                        <div className={`text-2xl font-bold ${stat.color} transition-all`}>
-                          {stat.count}
-                        </div>
+                        <div className={`text-2xl font-bold ${stat.color}`}>{stat.count}</div>
                         <div className="text-xs text-slate-500 mt-0.5">{stat.label}</div>
                       </div>
                     ))}
@@ -260,19 +323,12 @@ export default function TenantPortal() {
                     </h2>
                     <div className="flex flex-col items-center gap-4">
                       <div className="relative w-44 h-44 rounded-2xl overflow-hidden ring-2 ring-cyan-500/30 shadow-lg shadow-cyan-500/10">
-                        <Image
-                          src="/gcash-qr.jpg"
-                          alt="GCash QR Code"
-                          fill
-                          className="object-cover"
-                        />
+                        <Image src="/gcash-qr.jpg" alt="GCash QR Code" fill className="object-cover" />
                       </div>
                       <div className="text-center space-y-2 w-full">
                         <p className="text-slate-400 text-xs">Send payment to this GCash number:</p>
                         <div className="flex items-center gap-2 glass-card p-3 rounded-xl justify-between">
-                          <span className="text-white font-mono text-lg font-bold tracking-wider">
-                            {GCASH_NUMBER}
-                          </span>
+                          <span className="text-white font-mono text-lg font-bold tracking-wider">{GCASH_NUMBER}</span>
                           <button
                             id="copy-gcash-btn"
                             onClick={copyGCash}
@@ -286,7 +342,7 @@ export default function TenantPortal() {
                           </button>
                         </div>
                         <p className="text-slate-500 text-xs">
-                          After paying, enter your 13-digit GCash reference number below.
+                          After paying, upload your GCash receipt screenshot below.
                         </p>
                       </div>
                     </div>
@@ -327,47 +383,83 @@ export default function TenantPortal() {
                           <div className="flex items-center gap-2 bg-red-500/10 border border-red-500/30 rounded-lg px-3 py-2">
                             <span className="text-red-400 text-sm">❌</span>
                             <p className="text-red-400 text-xs">
-                              Your previous submission was rejected. Please re-submit with a valid
-                              reference.
+                              Your previous receipt was rejected. Please upload a new one.
                             </p>
                           </div>
                         )}
 
                         <div className="space-y-2">
-                          <label
-                            htmlFor={`ref-${bill.id}`}
-                            className="text-xs font-medium text-slate-400"
-                          >
-                            GCash Reference Number (13 digits)
+                          <label className="text-xs font-medium text-slate-400">
+                            Upload GCash Receipt
                           </label>
-                          <input
-                            id={`ref-${bill.id}`}
-                            type="text"
-                            inputMode="numeric"
-                            maxLength={13}
-                            placeholder="e.g. 1234567890123"
-                            value={referenceInputs[bill.id] || ''}
-                            onChange={(e) => {
-                              const val = e.target.value.replace(/\D/g, '').slice(0, 13);
-                              setReferenceInputs((prev) => ({ ...prev, [bill.id]: val }));
-                              setSubmitStates((prev) => ({ ...prev, [bill.id]: 'idle' }));
+                          <div
+                            onDragOver={(e) => {
+                              e.preventDefault();
+                              setDragOver((prev) => ({ ...prev, [bill.id]: true }));
                             }}
-                            disabled={submitStates[bill.id] === 'loading'}
-                            className="w-full bg-white/5 border border-white/10 text-white font-mono rounded-xl px-4 py-3 text-sm focus:outline-none focus:border-indigo-500/60 focus:ring-1 focus:ring-indigo-500/30 transition-all placeholder-slate-600 disabled:opacity-50"
-                          />
-                          <p className="text-xs text-slate-600">
-                            {(referenceInputs[bill.id] || '').length}/13 digits
-                          </p>
+                            onDragLeave={(e) => {
+                              e.preventDefault();
+                              setDragOver((prev) => ({ ...prev, [bill.id]: false }));
+                            }}
+                            onDrop={(e) => {
+                              e.preventDefault();
+                              setDragOver((prev) => ({ ...prev, [bill.id]: false }));
+                              const dropped = e.dataTransfer.files?.[0];
+                              if (dropped) assignReceiptFile(bill.id, dropped);
+                            }}
+                            className={`relative flex flex-col items-center justify-center w-full min-h-[8rem] border-2 border-dashed rounded-xl cursor-pointer transition-all ${
+                              dragOver[bill.id]
+                                ? 'border-cyan-400 bg-cyan-500/10'
+                                : previewUrls[bill.id]
+                                  ? 'border-indigo-500/50 bg-slate-900/50'
+                                  : 'border-indigo-500/30 bg-slate-900/50 hover:bg-slate-800/50 hover:border-indigo-500/50'
+                            }`}
+                          >
+                            <input
+                              id={`receipt-${bill.id}`}
+                              type="file"
+                              accept="image/*"
+                              className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                              onChange={(e) => {
+                                const picked = e.target.files?.[0] || null;
+                                if (picked) assignReceiptFile(bill.id, picked);
+                                e.target.value = '';
+                              }}
+                              disabled={submitStates[bill.id] === 'loading'}
+                            />
+                            {previewUrls[bill.id] ? (
+                              <div className="flex flex-col items-center gap-2 p-3 pointer-events-none">
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img
+                                  src={previewUrls[bill.id]}
+                                  alt="Receipt preview"
+                                  className="max-h-24 rounded-lg object-contain"
+                                />
+                                <p className="text-xs text-indigo-400 font-medium truncate max-w-[200px]">
+                                  {receiptFiles[bill.id]?.name}
+                                </p>
+                                <p className="text-xs text-slate-500">Tap or drop to replace</p>
+                              </div>
+                            ) : (
+                              <div className="flex flex-col items-center justify-center py-6 pointer-events-none">
+                                <span className="text-3xl mb-2">{dragOver[bill.id] ? '📥' : '📸'}</span>
+                                <p className="text-sm text-slate-400">
+                                  <span className="font-semibold text-indigo-400">
+                                    {dragOver[bill.id] ? 'Drop receipt here' : 'Drag & drop'}
+                                  </span>
+                                  {!dragOver[bill.id] && ' or click to upload'}
+                                </p>
+                                <p className="text-xs text-slate-500 mt-1">PNG, JPG up to 5MB</p>
+                              </div>
+                            )}
+                          </div>
                         </div>
 
                         <button
-                          disabled={
-                            (referenceInputs[bill.id] || '').length !== 13 ||
-                            submitStates[bill.id] === 'loading'
-                          }
+                          disabled={!receiptFiles[bill.id] || submitStates[bill.id] === 'loading'}
                           onClick={() => handleSubmitPayment(bill)}
                           className={`w-full py-3.5 rounded-xl font-semibold shadow-lg transition-all active:scale-[0.98] flex items-center justify-center gap-2 ${
-                            (referenceInputs[bill.id] || '').length === 13
+                            receiptFiles[bill.id]
                               ? 'bg-gradient-to-r from-indigo-500 to-cyan-500 hover:from-indigo-400 hover:to-cyan-400 text-white shadow-indigo-500/20'
                               : 'bg-slate-800 text-slate-500 cursor-not-allowed border border-slate-700/50'
                           }`}
@@ -375,7 +467,7 @@ export default function TenantPortal() {
                           {submitStates[bill.id] === 'loading' ? (
                             <>
                               <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                              Submitting...
+                              Uploading...
                             </>
                           ) : (
                             'Submit Payment'
@@ -394,16 +486,11 @@ export default function TenantPortal() {
                     {pendingBills.map((bill) => (
                       <div
                         key={bill.id}
-                        className="glass-card p-4 border border-yellow-500/20 flex items-center justify-between gap-3 animate-in fade-in duration-300"
+                        className="glass-card p-4 border border-yellow-500/20 flex items-center justify-between gap-3 transition-all duration-300"
                       >
                         <div>
                           <h3 className="font-medium text-white text-sm">{bill.title}</h3>
-                          <p className="text-slate-500 text-xs mt-0.5 font-mono">
-                            Ref: {bill.reference_number}
-                          </p>
-                          <p className="text-yellow-400/80 text-xs mt-1">
-                            Awaiting admin verification
-                          </p>
+                          <p className="text-yellow-400/80 text-xs mt-1">Awaiting admin verification</p>
                         </div>
                         <div className="text-right shrink-0">
                           <span className="badge-pending px-2.5 py-1 rounded-full text-xs font-medium">

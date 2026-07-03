@@ -7,9 +7,9 @@ export async function GET() {
     const bills = await pool.query(
       `SELECT * FROM bills WHERE status = 'open' ORDER BY due_date ASC`
     );
-    const tenants = await pool.query(`SELECT id, name FROM tenants ORDER BY id ASC`);
+    const tenants = await pool.query(`SELECT id, name, room_number FROM tenants ORDER BY id ASC`);
     const payments = await pool.query(
-      `SELECT p.id as payment_id, p.bill_id, p.tenant_id, p.status FROM payments p`
+      `SELECT p.id as payment_id, p.bill_id, p.tenant_id, p.status, p.receipt_image FROM payments p`
     );
 
     const overview = bills.rows.map((bill) => ({
@@ -22,6 +22,7 @@ export async function GET() {
           ...tenant,
           payment_id: payment?.payment_id || null,
           payment_status: payment?.status || 'unpaid',
+          receipt_image: payment?.receipt_image || null,
         };
       }),
     }));

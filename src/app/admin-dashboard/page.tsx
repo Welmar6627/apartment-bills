@@ -26,6 +26,7 @@ interface TenantOverview {
   room_number: string | null;
   payment_id: number | null;
   payment_status: string;
+  receipt_image: string | null;
 }
 
 interface BillOverview {
@@ -792,27 +793,41 @@ function AdminDashboardContent() {
                         return (
                           <div
                             key={tenant.id}
-                            className={`flex items-center justify-between gap-3 rounded-xl p-3 border transition-all duration-500
+                            className={`rounded-xl p-3 border transition-all duration-500 space-y-2
                               ${tenant.payment_status === 'approved' ? 'bg-green-500/5 border-green-500/20 opacity-60' :
                                 tenant.payment_status === 'pending' ? 'bg-yellow-500/5 border-yellow-500/20' :
                                 'bg-white/3 border-white/8'}`}
                           >
-                            <div>
-                              <div className="text-sm font-medium text-white">{tenant.name}</div>
-                              {tenant.room_number && <div className="text-xs text-slate-500">{tenant.room_number}</div>}
-                              <div className={`text-xs mt-0.5 capitalize font-medium
-                                ${tenant.payment_status === 'approved' ? 'text-green-400' :
-                                  tenant.payment_status === 'pending' ? 'text-yellow-400' : 'text-slate-500'}`}>
-                                {tenant.payment_status === 'approved' ? '✓ Paid' : tenant.payment_status}
+                            <div className="flex items-center justify-between gap-3">
+                              <div>
+                                <div className="text-sm font-medium text-white">{tenant.name}</div>
+                                {tenant.room_number && <div className="text-xs text-slate-500">{tenant.room_number}</div>}
+                                <div className={`text-xs mt-0.5 capitalize font-medium
+                                  ${tenant.payment_status === 'approved' ? 'text-green-400' :
+                                    tenant.payment_status === 'pending' ? 'text-yellow-400' : 'text-slate-500'}`}>
+                                  {tenant.payment_status === 'approved' ? '✓ Paid' : tenant.payment_status}
+                                </div>
                               </div>
+                              {tenant.payment_status !== 'approved' && (
+                                <button
+                                  onClick={() => handleCashPayment(bill.id, tenant.id)}
+                                  disabled={cashState === 'loading' || cashState === 'done'}
+                                  className="shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/25 transition-all disabled:opacity-50 whitespace-nowrap"
+                                >
+                                  {cashState === 'loading' ? '...' : cashState === 'done' ? '✓ Done' : '💵 Paid in Cash'}
+                                </button>
+                              )}
                             </div>
-                            {tenant.payment_status !== 'approved' && (
+                            {tenant.payment_status === 'pending' && tenant.receipt_image && (
                               <button
-                                onClick={() => handleCashPayment(bill.id, tenant.id)}
-                                disabled={cashState === 'loading' || cashState === 'done'}
-                                className="shrink-0 px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/25 transition-all disabled:opacity-50 whitespace-nowrap"
+                                onClick={() => setViewingImage(tenant.receipt_image!)}
+                                className="w-full rounded-lg overflow-hidden border border-yellow-500/20 hover:border-indigo-500/40 transition-all group relative"
                               >
-                                {cashState === 'loading' ? '...' : cashState === 'done' ? '✓ Done' : '💵 Paid in Cash'}
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img src={tenant.receipt_image} alt="Receipt" className="w-full h-20 object-cover object-top group-hover:opacity-80 transition-opacity" />
+                                <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/40">
+                                  <span className="text-white text-xs font-semibold">🔍 View Receipt</span>
+                                </div>
                               </button>
                             )}
                           </div>
